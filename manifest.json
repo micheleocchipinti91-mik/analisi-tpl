@@ -1,0 +1,25 @@
+{
+  "name": "Analisi Linee ATM TPL",
+  "short_name": "Analisi TPL",
+  "description": "Analisi Tratte TPL – ATM Trapani SpA",
+  "start_url": "./Analisi BUS Linee.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#0b5394",
+  "icons": [
+    {
+      "src": "assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
