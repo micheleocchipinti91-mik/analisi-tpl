@@ -1228,7 +1228,7 @@ function buildAnalisiAutomaticaHtml(rowsAllDir, fasce, cfgP, lineaObj){
   const MAX_PCT=0.15;// mai alterare più del 15% della durata programmata
 
   const gOf=(r,f)=>r.periodo==='AM'?'AM':r.periodo==='PM'?'PM':r.periodo==='SE'?'SE':f.tipo;
-  const fmtSgn=v=>v==null?'–':(v>=0?'+':'')+fmtΔ(v);
+  const fmtSgn=v=>fmtΔ(v);
 
   // Tabella soglie precisa
   const giudizio=v=>{
