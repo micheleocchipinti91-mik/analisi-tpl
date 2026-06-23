@@ -1218,22 +1218,33 @@ function _buildCorsaChart(canvasId, chartRows){
 }
 
 // ── Analisi Automatica e Rimedi Operativi ──────────────────────────────────────
-// Genera la sezione testuale in fondo al Dettaglio Corse quando è selezionato
-// un Periodo configurato con fasce orarie. Propone solo aggiustamenti minimi
-// (±1–3 min) senza stravolgere l'ossatura dell'orario.
+// Appare solo con Periodo configurato + fasce. Aggiustamenti max ±3 min,
+// mai > 15% della durata programmata, mai se < 5 corse per fascia.
 function buildAnalisiAutomaticaHtml(rowsAllDir, fasce, cfgP, lineaObj){
   if(!cfgP||!fasce.length||!rowsAllDir.length)return'';
 
+  const MIN_CORSE=5; // soglia minima per formulare rimedi su una fascia
+  const MAX_MIN=3;   // aggiustamento massimo assoluto in minuti
+  const MAX_PCT=0.15;// mai alterare più del 15% della durata programmata
+
   const gOf=(r,f)=>r.periodo==='AM'?'AM':r.periodo==='PM'?'PM':r.periodo==='SE'?'SE':f.tipo;
   const fmtSgn=v=>v==null?'–':(v>=0?'+':'')+fmtΔ(v);
-  const avv=v=>{
-    if(v==null)return{e:'⚪',t:'dato non disponibile'};
-    if(Math.abs(v)<=1)return{e:'🟢',t:'nella norma'};
-    if(v>1&&v<=3)return{e:'🟡',t:'leggero ritardo'};
-    if(v>3&&v<=6)return{e:'🟠',t:'ritardo moderato'};
-    if(v>6)return{e:'🔴',t:'ritardo significativo'};
-    if(v<=-1&&v>-3)return{e:'🔵',t:'leggero anticipo'};
-    return{e:'🔵',t:'anticipo marcato'};
+
+  // Tabella soglie precisa
+  const giudizio=v=>{
+    if(v==null)return{e:'⚪',t:'–'};
+    if(Math.abs(v)<=1)return{e:'✅',t:'Regolare'};
+    if(v>1&&v<=3)return{e:'⚠️',t:'Lieve ritardo'};
+    if(v>3&&v<=5)return{e:'🔶',t:'Ritardo moderato'};
+    if(v>5)return{e:'🔴',t:'Ritardo critico'};
+    return{e:'🔵',t:'Anticipo anomalo'};
+  };
+
+  // Calcola quanti minuti è sicuro suggerire (regola 15% + cap 3 min)
+  const rimSafe=(rawMin, avgDurProg)=>{
+    if(rawMin<=0)return 0;
+    const max15=avgDurProg!=null?Math.floor(avgDurProg*MAX_PCT):MAX_MIN;
+    return Math.min(rawMin, MAX_MIN, max15);
   };
 
   // ── Statistiche per fascia ──
@@ -1243,9 +1254,12 @@ function buildAnalisiAutomaticaHtml(rowsAllDir, fasce, cfgP, lineaObj){
     const A=inF.filter(r=>r.direzione==='A'), R=inF.filter(r=>r.direzione==='R');
     const aam=A.filter(r=>gOf(r,f)==='AM'),apm=A.filter(r=>gOf(r,f)==='PM'),ase=A.filter(r=>gOf(r,f)==='SE');
     const ram=R.filter(r=>gOf(r,f)==='AM'),rpm=R.filter(r=>gOf(r,f)==='PM'),rse=R.filter(r=>gOf(r,f)==='SE');
+    const avgDurProg=avg(inF.map(r=>r.durata_prog));
     return{
       f, lbl:`${f.nome?f.nome+' ':''}${f.dalle}–${f.alle} (${f.tipo})`,
-      avgAll:avg(inF.map(r=>r.delta_durata)),
+      lbl2:`${f.dalle}–${f.alle}`,
+      nTot:inF.length, nA:A.length, nR:R.length,
+      avgAll:avg(inF.map(r=>r.delta_durata)), avgDurProg,
       avgA:avg(A.map(r=>r.delta_durata)), avgR:avg(R.map(r=>r.delta_durata)),
       avgAAM:avg(aam.map(r=>r.delta_durata)), avgAPM:avg(apm.map(r=>r.delta_durata)), avgASE:avg(ase.map(r=>r.delta_durata)),
       avgRAM:avg(ram.map(r=>r.delta_durata)), avgRPM:avg(rpm.map(r=>r.delta_durata)), avgRSE:avg(rse.map(r=>r.delta_durata)),
@@ -1256,54 +1270,75 @@ function buildAnalisiAutomaticaHtml(rowsAllDir, fasce, cfgP, lineaObj){
   const gAll=avg(rowsAllDir.map(r=>r.delta_durata));
   const gA=avg(rowsAllDir.filter(r=>r.direzione==='A').map(r=>r.delta_durata));
   const gR=avg(rowsAllDir.filter(r=>r.direzione==='R').map(r=>r.delta_durata));
-  const validi=perF.filter(p=>p.avgAll!=null);
-  const worst=validi.length?validi.reduce((a,b)=>Math.abs(a.avgAll)>Math.abs(b.avgAll)?a:b):null;
+  const gDurProg=avg(rowsAllDir.map(r=>r.durata_prog));
+  const nTotale=rowsAllDir.length;
 
-  // ── Testo globale ──
+  const conDatiValidi=perF.filter(p=>p.avgAll!=null&&p.nTot>=MIN_CORSE);
+  const worst=conDatiValidi.length?conDatiValidi.reduce((a,b)=>Math.abs(a.avgAll)>Math.abs(b.avgAll)?a:b):null;
+  const gGiud=giudizio(gAll);
+
+  // ── Testo andamento generale ──
   let tGlob='';
-  if(gAll==null){
-    tGlob='Dati insufficienti per l\'analisi. Verificare che il periodo configurato abbia corse registrate nelle fasce orarie impostate.';
-  } else if(Math.abs(gAll)<=1){
-    tGlob=`Nel periodo <strong>${escH(cfgP.nome||'selezionato')}</strong> le corse mostrano una buona aderenza all'orario: il Δ Durata medio globale è <strong>${fmtSgn(gAll)}</strong>, entro la tolleranza di ±1 minuto.`;
-  } else if(gAll>1){
-    tGlob=`Nel periodo <strong>${escH(cfgP.nome||'selezionato')}</strong> si registra un <strong>allungamento medio di ${fmtSgn(gAll)}</strong> rispetto alla durata programmata. Le corse tendono ad impiegare più tempo del previsto, con rischio di accumulo di ritardi nelle fasce successive.`;
+  if(gAll==null||nTotale<MIN_CORSE){
+    tGlob=`Dati insufficienti per l'analisi (minimo ${MIN_CORSE} corse necessarie). Verificare che il periodo configurato abbia corse registrate nelle fasce orarie impostate.`;
   } else {
-    tGlob=`Nel periodo <strong>${escH(cfgP.nome||'selezionato')}</strong> le corse risultano mediamente più brevi del programmato di <strong>${fmtSgn(gAll)}</strong>. Potrebbe indicare tempi programmati sovrastimati oppure condizioni di traffico favorevoli.`;
+    const periodoStr=`<strong>${escH(cfgP.nome||'selezionato')}</strong>`;
+    const deltaStr=`<strong>${fmtSgn(gAll)}</strong>`;
+    if(Math.abs(gAll)<=1){
+      tGlob=`Nel periodo ${periodoStr} le corse mostrano un'ottima aderenza all'orario programmato: il Δ Durata medio globale è ${deltaStr}, entro la tolleranza di ±1 minuto. ✅`;
+    } else if(gAll>1&&gAll<=3){
+      tGlob=`Nel periodo ${periodoStr} si registra un <strong>lieve allungamento medio di ${deltaStr}</strong> rispetto alla durata programmata. Le corse tendono a impiegare qualche minuto in più del previsto.`;
+    } else if(gAll>3&&gAll<=5){
+      tGlob=`Nel periodo ${periodoStr} si registra un <strong>ritardo moderato di ${deltaStr}</strong> rispetto alla durata programmata. L'accumulo di ritardi è sistematico e richiede interventi mirati sulle fasce più critiche.`;
+    } else if(gAll>5){
+      tGlob=`Nel periodo ${periodoStr} il ritardo medio è <strong>critico: ${deltaStr}</strong> rispetto alla durata programmata. Il problema è strutturale e interessa la maggior parte delle corse rilevate.`;
+    } else {
+      tGlob=`Nel periodo ${periodoStr} le corse risultano mediamente più brevi del programmato di ${deltaStr}. Potrebbe indicare tempi programmati sovrastimati o condizioni di traffico favorevoli.`;
+    }
   }
 
-  // Squilibrio A/R globale
+  // Squilibrio A/R
   let tAR='';
-  if(gA!=null&&gR!=null){
+  if(gA!=null&&gR!=null&&rowsAllDir.filter(r=>r.direzione==='A').length>=MIN_CORSE&&rowsAllDir.filter(r=>r.direzione==='R').length>=MIN_CORSE){
     const diff=Math.abs(gA-gR);
     if(diff>2){
-      const peg=gA>gR?'Andata':'Ritorno', mig=gA>gR?'Ritorno':'Andata';
-      const vPeg=Math.max(gA,gR), vMig=Math.min(gA,gR);
-      tAR=` Emerge uno <strong>squilibrio tra le direzioni</strong>: la tratta di <strong>${peg}</strong> registra in media ${fmtSgn(vPeg)} contro ${fmtSgn(vMig)} del ${mig} (differenza di ${fmtΔ(diff)}), suggerendo un'asimmetria nel traffico o nel percorso.`;
+      const peg=gA>gR?'Andata':'Ritorno';
+      const vPeg=gA>gR?gA:gR, vMig=gA>gR?gR:gA;
+      tAR=` Emerge uno <strong>squilibrio tra le direzioni</strong>: <strong>${peg}</strong> registra mediamente ${fmtSgn(vPeg)} contro ${fmtSgn(vMig)} dell'altra direzione (differenza ${fmtΔ(diff)}), suggerendo un'asimmetria strutturale nel percorso o nel traffico.`;
     } else {
-      tAR=` Il comportamento tra Andata (${fmtSgn(gA)}) e Ritorno (${fmtSgn(gR)}) risulta <strong>sostanzialmente equilibrato</strong>.`;
+      tAR=` Il comportamento tra Andata (${fmtSgn(gA)}) e Ritorno (${fmtSgn(gR)}) risulta <strong>equilibrato</strong>.`;
     }
   }
 
   // ── Focus per fascia ──
   const focusHtml=perF.map(p=>{
-    const vl=avv(p.avgAll);
-    let t=`<strong>${escH(p.lbl)}</strong>: Δ medio <strong>${fmtSgn(p.avgAll)}</strong> — ${vl.e} <em>${vl.t}</em>`;
-    // squilibrio A/R
-    if(p.avgA!=null&&p.avgR!=null){
-      const d=Math.abs(p.avgA-p.avgR);
-      if(d>2){const pg=p.avgA>p.avgR?'Andata':'Ritorno';t+=`. Squilibrio A/R: <strong>${pg}</strong> in ritardo di ${fmtΔ(d)} in più`;}
-    } else if(p.avgA!=null&&p.avgR==null){
-      t+=`. Solo corse di Andata disponibili`;
-    } else if(p.avgR!=null&&p.avgA==null){
-      t+=`. Solo corse di Ritorno disponibili`;
+    const gd=giudizio(p.avgAll);
+    const insuffDati=p.nTot<MIN_CORSE;
+    let t=`<strong>${escH(p.lbl)}</strong>`;
+    if(insuffDati){
+      t+=`: <em style="color:var(--muted)">dati insufficienti (${p.nTot} corse, minimo ${MIN_CORSE})</em>`;
+      return`<li style="margin-bottom:9px">${t}.</li>`;
     }
-    // AM vs PM
+    t+=`: Andata <strong>${fmtSgn(p.avgA)}</strong>, Ritorno <strong>${fmtSgn(p.avgR)}</strong> — Δ medio ${fmtSgn(p.avgAll)} ${gd.e} <em>${gd.t}</em>`;
+    // squilibrio A/R per fascia
+    if(p.avgA!=null&&p.avgR!=null&&p.nA>=MIN_CORSE&&p.nR>=MIN_CORSE){
+      const d=Math.abs(p.avgA-p.avgR);
+      if(d>2){
+        const pg=p.avgA>p.avgR?'Andata':'Ritorno';
+        t+=`. <strong>Squilibrio ${pg}</strong>: ritardo concentrato sulla tratta di ${pg} (+${fmtΔ(d)} rispetto all'altra direzione)`;
+      }
+    }
+    // collo di bottiglia
+    if(worst&&worst.lbl===p.lbl&&p.avgAll!=null&&Math.abs(p.avgAll)>3){
+      t+=`. 🔴 <strong>Collo di bottiglia principale</strong> del periodo`;
+    }
+    // turno peggiore
     const avgAM=avg([p.avgAAM,p.avgRAM].filter(v=>v!=null));
     const avgPM=avg([p.avgAPM,p.avgRPM].filter(v=>v!=null));
     const avgSE=avg([p.avgASE,p.avgRSE].filter(v=>v!=null));
     if(avgAM!=null&&avgPM!=null&&Math.abs(avgAM-avgPM)>2){
       const pg=avgAM>avgPM?'AM':'PM';
-      t+=`. Turni <strong>${pg}</strong> più critici in questa fascia`;
+      t+=`. Turni <strong>${pg}</strong> più critici in questa fascia (${fmtSgn(avgAM)} AM / ${fmtSgn(avgPM)} PM)`;
     }
     if(avgSE!=null&&p.avgAll!=null&&Math.abs(avgSE-p.avgAll)>2){
       const seg=avgSE>p.avgAll?'peggiora':'migliora';
@@ -1316,60 +1351,88 @@ function buildAnalisiAutomaticaHtml(rowsAllDir, fasce, cfgP, lineaObj){
   const rimedi=[];
   const usati=new Set();
   const addR=(id,testo)=>{if(!usati.has(id)){usati.add(id);rimedi.push(testo);}};
+  const datiSuff=gAll!=null&&nTotale>=MIN_CORSE;
 
-  // 1. Ritardo globale
-  if(gAll!=null&&gAll>3){
-    const ma=Math.min(Math.round(gAll*0.4),3);
-    addR('glo_rit',`⏱ <strong>Aggiungere ${ma} min di margine</strong> alle fasce più critiche, distribuendoli sulle fermate intermedie (non sull'orario di partenza dal capolinea) per evitare effetti a cascata.`);
-  }
-  // 2. Anticipo strutturale
-  if(gAll!=null&&gAll<-3){
-    const ma=Math.min(Math.round(Math.abs(gAll)*0.4),2);
-    addR('glo_ant',`⏱ <strong>Ridurre di ${ma} min le durate programmate</strong> nelle fasce meno trafficate: le corse arrivano sistematicamente in anticipo, indicando tempi sovrastimati. Mantenere invariate le fasce di punta.`);
-  }
-  // 3. Squilibrio A/R
-  if(gA!=null&&gR!=null&&Math.abs(gA-gR)>2){
-    const d=Math.abs(gA-gR);
-    const ma=Math.min(Math.round(d*0.4),3);
-    const pg=gA>gR?'Andata':'Ritorno', mg=gA>gR?'Ritorno':'Andata';
-    addR('ar_squi',`🔄 <strong>Asimmetria leggera tra le direzioni</strong>: aggiungere ${ma} min alla tratta di <strong>${pg}</strong> e recuperarli riducendo la sosta tecnica al capolinea sul lato <strong>${mg}</strong> (dove le corse arrivano in anticipo). Variazione massima suggerita: ±${ma} min, senza modificare l'orario di partenza delle corse successive.`);
-  }
-  // 4. Fascia critica
-  if(worst&&worst.avgAll!=null&&Math.abs(worst.avgAll)>3){
-    const isRit=worst.avgAll>0;
-    const ma=Math.min(Math.round(Math.abs(worst.avgAll)*0.4),3);
-    addR('worst_f',`📍 <strong>Fascia critica ${escH(worst.lbl)}</strong>: ${isRit?`anticipare le partenze di ${ma} min in questa finestra oraria. Verificare se esistono rallentamenti strutturali (mercati, scuole, ZTL) che giustifichino un adeguamento permanente dell'orario.`:`valutare una riduzione di ${ma} min nei tempi programmati di questa fascia, che mostra sistematicamente corse più rapide del previsto.`}`);
-  }
-  // 5. Sosta tecnica
-  if(lineaObj&&gAll!=null&&gAll>2){
-    const allT=lineaObj.turni.flatMap(t=>t.tratte||[]);
-    const avgSt=allT.length?allT.reduce((s,tr)=>s+(tr.sostaTecnica??5),0)/allT.length:5;
-    if(avgSt>=5){
-      addR('sosta',`🚏 <strong>Ottimizzazione della sosta tecnica al capolinea</strong>: la sosta media configurata è ${fmtDur(avgSt)}. In presenza di ritardi strutturali, ridurre la sosta di 1–2 min nelle fasce critiche consente di assorbire i ritardi accumulati senza modificare l'orario di partenza della corsa successiva.`);
+  if(!datiSuff){
+    rimedi.push(`📋 Dati insufficienti per formulare rimedi. Verificare che le corse siano registrate per tutte le fasce del periodo selezionato (minimo ${MIN_CORSE} corse per fascia).`);
+  } else {
+    // ── Tutto regolare ──
+    const tuttoOk=Math.abs(gAll)<=1&&perF.every(p=>p.avgAll==null||Math.abs(p.avgAll)<=1||p.nTot<MIN_CORSE);
+    if(tuttoOk){
+      addR('ok',`✅ <strong>Nessun intervento necessario. L'orario risulta ben calibrato.</strong> Tutti i Δ sono entro ±1 minuto. Continuare il monitoraggio nei periodi successivi.`);
     }
-  }
-  // 6. Corse serali peggiori
-  perF.forEach(p=>{
-    const avgSE=avg([p.avgASE,p.avgRSE].filter(v=>v!=null));
-    if(avgSE!=null&&p.avgAll!=null&&avgSE-p.avgAll>3&&!usati.has('se_rit')){
-      addR('se_rit',`🌙 <strong>Corse serali (SE) più critiche</strong>: nella fascia ${escH(p.lbl)} le corse serali accumulano mediamente ${fmtΔ(avgSE-p.avgAll)} in più rispetto alla media. Valutare un anticipo di 1–2 min sull'orario programmato serale oppure un ampliamento della sosta tecnica tra le ultime corse.`);
+
+    // ── Anticipo partenza per fascia critica ──
+    perF.forEach(p=>{
+      if(p.nTot<MIN_CORSE||p.avgAll==null)return;
+      if(p.avgAll>1){
+        const raw=Math.round(p.avgAll*0.4);
+        const ma=rimSafe(raw,p.avgDurProg);
+        if(ma>0){
+          const dirTxt=p.avgA!=null&&p.avgR!=null&&Math.abs(p.avgA-p.avgR)>2
+            ?(p.avgA>p.avgR?` (priorità Andata)`:'(priorità Ritorno)'):'';
+          addR(`ant_${p.lbl2}`,`⏱ <strong>Anticipare la partenza${dirTxt} nella fascia ${escH(p.lbl2)} di ${ma} min</strong> per recuperare il ritardo strutturale medio di ${fmtSgn(p.avgAll)}. Distribuire il margine sulle fermate intermedie, non sull'orario al capolinea.`);
+        }
+      }
+      if(p.avgAll<-1){
+        const raw=Math.round(Math.abs(p.avgAll)*0.4);
+        const ma=rimSafe(raw,p.avgDurProg);
+        if(ma>0){
+          addR(`rid_${p.lbl2}`,`⏱ <strong>Ridurre di ${ma} min la durata programmata nella fascia ${escH(p.lbl2)}</strong>: le corse arrivano sistematicamente con ${fmtSgn(p.avgAll)} di anticipo. Mantenere invariate le fasce di punta.`);
+        }
+      }
+    });
+
+    // ── Sosta tecnica al capolinea ──
+    if(gAll>2){
+      const allT=lineaObj?lineaObj.turni.flatMap(t=>t.tratte||[]):[];
+      const avgSt=allT.length?allT.reduce((s,tr)=>s+(tr.sostaTecnica??5),0)/allT.length:null;
+      if(avgSt!=null){
+        const azione=avgSt>=4?'Ridurre la sosta di 1–2 min nelle fasce critiche':'Valutare un ampliamento della sosta di 1 min';
+        addR('sosta',`🚏 <strong>Sosta tecnica al capolinea (attuale ~${fmtDur(avgSt)})</strong>: ${azione} per assorbire i ritardi accumulati senza modificare l'orario di partenza della corsa successiva.`);
+      }
     }
-  });
-  // 7. Tutto ok
-  if(gAll!=null&&Math.abs(gAll)<=1&&rimedi.length===0){
-    addR('ok',`✅ <strong>Orario ben calibrato</strong>: i dati mostrano un'ottima aderenza all'orario programmato. Nessun intervento correttivo urgente è necessario. Monitorare le fasce con |Δ| > 1 min nei periodi successivi per rilevare eventuali tendenze emergenti.`);
-  }
-  if(!rimedi.length){
-    rimedi.push(`📋 Dati insufficienti per formulare rimedi specifici. Assicurarsi di avere corse registrate in tutte le fasce orarie del periodo selezionato.`);
+
+    // ── Asimmetria leggera A/R ──
+    if(gA!=null&&gR!=null&&rowsAllDir.filter(r=>r.direzione==='A').length>=MIN_CORSE&&rowsAllDir.filter(r=>r.direzione==='R').length>=MIN_CORSE){
+      const diff=gA-gR;
+      if(Math.abs(diff)>2){
+        const pg=diff>0?'Andata':'Ritorno';
+        const raw=Math.min(Math.round(Math.abs(diff)*0.4),MAX_MIN);
+        const ma=rimSafe(raw,gDurProg);
+        if(ma>0){
+          addR('ar_asim',`🔄 <strong>Allocare ${ma} min in più solo sull'${pg}</strong> (tratta sistematicamente più lenta di ${fmtΔ(Math.abs(diff))}). Recuperare il margine riducendo la sosta tecnica al capolinea sul lato opposto, dove le corse arrivano in anticipo. Variazione massima: ±${ma} min.`);
+        }
+      }
+    }
+
+    // ── Corse serali ──
+    perF.forEach(p=>{
+      const avgSE=avg([p.avgASE,p.avgRSE].filter(v=>v!=null));
+      const nSE=[...rowsAllDir.filter(r=>{
+        const da=parseTime(p.f.dalle),al=parseTime(p.f.alle);
+        return r.pp!=null&&da!=null&&al!=null&&r.pp>=da&&r.pp<=al&&gOf(r,p.f)==='SE';
+      })].length;
+      if(avgSE!=null&&nSE>=MIN_CORSE&&p.avgAll!=null&&avgSE-p.avgAll>2&&!usati.has('se_rit')){
+        const raw=Math.min(Math.round((avgSE-p.avgAll)*0.4),MAX_MIN);
+        const ma=rimSafe(raw,p.avgDurProg);
+        if(ma>0) addR('se_rit',`🌙 <strong>Corse serali (SE) più critiche nella fascia ${escH(p.lbl2)}</strong>: Δ SE medio ${fmtSgn(avgSE)} contro ${fmtSgn(p.avgAll)} generale. Anticipare le partenze serali di ${ma} min o ampliare di ${ma} min la sosta tecnica pre-ultima-corsa.`);
+      }
+    });
+
+    // ── Rimodulazione sosta intermedia ──
+    if(worst&&worst.avgAll!=null&&Math.abs(worst.avgAll)>3&&worst.nTot>=MIN_CORSE){
+      addR('sosta_int',`📍 <strong>Rimodulazione sosta intermedia nella fascia ${escH(worst.lbl2)}</strong> (collo di bottiglia, Δ ${fmtSgn(worst.avgAll)}): verificare se esiste una fermata intermedia con tempo di sosta eccessivo; ridurla di 1 min può alleggerire il ritardo strutturale senza toccare gli orari al capolinea.`);
+    }
   }
 
   return`
     <hr style="border:none;border-top:2px solid var(--border);margin:32px 0 24px">
     <div style="background:linear-gradient(135deg,#eff6ff 0%,#f0fdf4 100%);border:1.5px solid #bfdbfe;border-radius:10px;padding:20px 22px">
-      <div style="font-size:15px;font-weight:700;color:#1e40af;margin-bottom:4px">🧠 Analisi Automatica e Rimedi Operativi</div>
-      <div style="font-size:11.5px;color:#64748b;margin-bottom:20px">Generata sui dati del periodo <strong>${escH(cfgP.nome||'selezionato')}</strong>. I rimedi proposti suggeriscono solo piccoli aggiustamenti (±1–3 min) senza stravolgere l'ossatura dell'orario pianificato.</div>
+      <div style="font-size:15px;font-weight:700;color:#1e40af;margin-bottom:4px">📋 Analisi Automatica e Rimedi Operativi</div>
+      <div style="font-size:11.5px;color:#64748b;margin-bottom:20px">Periodo: <strong>${escH(cfgP.nome||'–')}</strong> · ${nTotale} corse analizzate · Aggiustamenti proposti: max ±${MAX_MIN} min, mai > ${MAX_PCT*100}% della durata programmata · Nessuna modifica strutturale all'orario.</div>
 
-      <div style="font-size:13px;font-weight:700;color:#1e293b;padding-bottom:6px;border-bottom:1px solid #bfdbfe;margin-bottom:10px">📊 Andamento generale</div>
+      <div style="font-size:13px;font-weight:700;color:#1e293b;padding-bottom:6px;border-bottom:1px solid #bfdbfe;margin-bottom:10px">📊 Andamento generale &nbsp;<span style="font-weight:400;font-size:12px">${gGiud.e} ${gGiud.t}</span></div>
       <div style="font-size:13px;color:#334155;line-height:1.75;margin-bottom:20px">${tGlob}${tAR}</div>
 
       <div style="font-size:13px;font-weight:700;color:#1e293b;padding-bottom:6px;border-bottom:1px solid #bfdbfe;margin-bottom:10px">🕐 Focus per fascia oraria</div>
