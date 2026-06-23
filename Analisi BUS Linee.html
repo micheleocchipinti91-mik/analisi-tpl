@@ -1218,19 +1218,21 @@ function _buildCorsaChart(canvasId, chartRows){
 }
 
 // Grafico "Δ Durata medio per fascia oraria" (Andata/Ritorno/A-R): asse X = fasce
-// orarie del periodo (AM poi PM), due serie indipendenti AM (blu) e PM (arancione)
+// orarie del periodo (AM poi PM), tre serie indipendenti AM (blu), PM (arancione), SE (verde)
 // + linea nera fissa a zero come riferimento.
 function _buildFasciaDirezioneChart(canvasId, fasce, dirRows){
   const labels=fasce.map(f=>`${f.nome?f.nome+' — ':''}${f.dalle}–${f.alle}`);
-  const giornataOf=(r,f)=>r.periodo==='AM'?'AM':r.periodo==='PM'?'PM':f.tipo;
-  const amData=[],pmData=[];
+  const giornataOf=(r,f)=>r.periodo==='AM'?'AM':r.periodo==='PM'?'PM':r.periodo==='SE'?'SE':f.tipo;
+  const amData=[],pmData=[],seData=[];
   fasce.forEach(f=>{
     const dalle=parseTime(f.dalle),alle=parseTime(f.alle);
     const inFascia=dirRows.filter(r=>r.pp!=null&&dalle!=null&&alle!=null&&r.pp>=dalle&&r.pp<=alle);
     const amRows=inFascia.filter(r=>giornataOf(r,f)==='AM');
     const pmRows=inFascia.filter(r=>giornataOf(r,f)==='PM');
+    const seRows=inFascia.filter(r=>giornataOf(r,f)==='SE');
     amData.push(amRows.length?avg(amRows.map(r=>r.delta_durata)):null);
     pmData.push(pmRows.length?avg(pmRows.map(r=>r.delta_durata)):null);
+    seData.push(seRows.length?avg(seRows.map(r=>r.delta_durata)):null);
   });
   const el=document.getElementById(canvasId);
   if(!el)return;
@@ -1238,6 +1240,7 @@ function _buildFasciaDirezioneChart(canvasId, fasce, dirRows){
   state.charts[canvasId]=new Chart(el,{type:'line',data:{labels,datasets:[
     {label:'AM',data:amData,borderColor:'#2563eb',backgroundColor:'#2563eb',tension:.3,fill:false,pointRadius:5,pointHoverRadius:6,spanGaps:true,borderWidth:2},
     {label:'PM',data:pmData,borderColor:'#d97706',backgroundColor:'#d97706',tension:.3,fill:false,pointRadius:5,pointHoverRadius:6,spanGaps:true,borderWidth:2},
+    {label:'SE',data:seData,borderColor:'#16a34a',backgroundColor:'#16a34a',tension:.3,fill:false,pointRadius:5,pointHoverRadius:6,spanGaps:true,borderWidth:2},
     {label:'ΔT Prog.',data:zero,borderColor:'#000',borderWidth:1.5,pointRadius:0,fill:false,tension:0,spanGaps:true}
   ]},options:{responsive:true,maintainAspectRatio:false,
     plugins:{legend:{position:'top',labels:{font:{size:11},boxWidth:20}},
@@ -1380,7 +1383,7 @@ function renderDettaglio(){
   const fasciaDirChartsHtml = fasciaDirCharts.length ? `
     <hr style="border:none;border-top:2px solid var(--border);margin:28px 0 20px">
     <div style="font-weight:700;font-size:14px;margin-bottom:4px;color:var(--accent)">📈 Δ Durata Medio per Fascia Oraria — confronto Andata / Ritorno / A-R</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Sempre tutti e tre, indipendentemente dal filtro Tratta impostato sopra. <span style="color:#2563eb;font-weight:600">●</span> AM &nbsp; <span style="color:#d97706;font-weight:600">●</span> PM &nbsp; <span style="color:#000;font-weight:600">―</span> ΔT Prog. (riferimento zero)</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Sempre tutti e tre, indipendentemente dal filtro Tratta impostato sopra. <span style="color:#2563eb;font-weight:600">●</span> AM &nbsp; <span style="color:#d97706;font-weight:600">●</span> PM &nbsp; <span style="color:#16a34a;font-weight:600">●</span> SE &nbsp; <span style="color:#000;font-weight:600">―</span> ΔT Prog. (riferimento zero)</div>
     ${fasciaDirCharts.map(({id,titolo})=>`
       <div style="margin-bottom:22px">
         <div style="font-weight:600;font-size:13px;margin-bottom:6px">${escH(titolo)}</div>
@@ -2114,8 +2117,8 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
     return img;
   }
 
-  // ── Helper: genera immagine grafico Δ Durata medio per fascia oraria (AM/PM + riferimento zero) ──
-  async function makeFasciaDirChart(labels, amData, pmData){
+  // ── Helper: genera immagine grafico Δ Durata medio per fascia oraria (AM/PM/SE + riferimento zero) ──
+  async function makeFasciaDirChart(labels, amData, pmData, seData){
     const cvs=document.createElement('canvas');
     cvs.width=1100;cvs.height=380;cvs.style.cssText='position:absolute;left:-9999px';
     document.body.appendChild(cvs);
@@ -2123,6 +2126,7 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
     const ch=new Chart(cvs,{type:'line',data:{labels,datasets:[
       {label:'AM',data:amData,borderColor:'#2563eb',backgroundColor:'#2563eb',tension:.3,fill:false,pointRadius:5,spanGaps:true,borderWidth:2},
       {label:'PM',data:pmData,borderColor:'#d97706',backgroundColor:'#d97706',tension:.3,fill:false,pointRadius:5,spanGaps:true,borderWidth:2},
+      {label:'SE',data:seData,borderColor:'#16a34a',backgroundColor:'#16a34a',tension:.3,fill:false,pointRadius:5,spanGaps:true,borderWidth:2},
       {label:'ΔT Prog.',data:zero,borderColor:'#000',borderWidth:1.5,pointRadius:0,fill:false,tension:0,spanGaps:true}
     ]},options:{animation:{duration:0},responsive:false,
       plugins:{legend:{position:'top',labels:{font:{size:12},boxWidth:22}}},
@@ -2293,18 +2297,20 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
       ...(cfgP.fasceOrarie?.PM||[]).filter(f=>f.dalle&&f.alle).map(f=>({...f,tipo:'PM'}))
     ];
     if(fasceAll.length){
-      const giornataOf=(r,f)=>r.periodo==='AM'?'AM':r.periodo==='PM'?'PM':f.tipo;
+      const giornataOf=(r,f)=>r.periodo==='AM'?'AM':r.periodo==='PM'?'PM':r.periodo==='SE'?'SE':f.tipo;
       const calcSeriePerFascia=(dirRows)=>{
-        const amData=[],pmData=[];
+        const amData=[],pmData=[],seData=[];
         fasceAll.forEach(f=>{
           const dalle=parseTime(f.dalle),alle=parseTime(f.alle);
           const inF=dirRows.filter(r=>r.pp!=null&&dalle!=null&&alle!=null&&r.pp>=dalle&&r.pp<=alle);
           const amR=inF.filter(r=>giornataOf(r,f)==='AM');
           const pmR=inF.filter(r=>giornataOf(r,f)==='PM');
+          const seR=inF.filter(r=>giornataOf(r,f)==='SE');
           amData.push(amR.length?avg(amR.map(r=>r.delta_durata)):null);
           pmData.push(pmR.length?avg(pmR.map(r=>r.delta_durata)):null);
+          seData.push(seR.length?avg(seR.map(r=>r.delta_durata)):null);
         });
-        return{amData,pmData};
+        return{amData,pmData,seData};
       };
       const fasceLabels=fasceAll.map(f=>`${f.nome?f.nome+' — ':''}${f.dalle}–${f.alle}`);
       const direzioniPagine=[
@@ -2313,14 +2319,14 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
         {tit:'A/R',dirRows:rowsAllDir}
       ];
       for(const {tit,dirRows} of direzioniPagine){
-        const {amData,pmData}=calcSeriePerFascia(dirRows);
-        if(!amData.some(v=>v!=null)&&!pmData.some(v=>v!=null))continue; // nessun dato per questa direzione: pagina non generata
-        const fImg=await makeFasciaDirChart(fasceLabels,amData,pmData);
+        const {amData,pmData,seData}=calcSeriePerFascia(dirRows);
+        if(!amData.some(v=>v!=null)&&!pmData.some(v=>v!=null)&&!seData.some(v=>v!=null))continue; // nessun dato per questa direzione: pagina non generata
+        const fImg=await makeFasciaDirChart(fasceLabels,amData,pmData,seData);
         doc.addPage();
         doc.setFontSize(14);doc.setTextColor(30,64,175);
         doc.text(`Confronto per Fascia Oraria – ${tit}  –  Linea ${linea.lineNumber}`,14,15);
         doc.setFontSize(8.5);doc.setTextColor(100,116,139);
-        doc.text(`${periodoLabel}  |  Δ Durata medio per fascia oraria (AM/PM)`,14,22);
+        doc.text(`${periodoLabel}  |  Δ Durata medio per fascia oraria (AM/PM/SE)`,14,22);
         doc.addImage(fImg,'PNG',14,30,chartW,chartH+35);
       }
     }
