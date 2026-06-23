@@ -1325,7 +1325,7 @@ function buildAnalisiAutomaticaHtml(rowsAllDir, fasce, cfgP, lineaObj){
       const d=Math.abs(p.avgA-p.avgR);
       if(d>2){
         const pg=p.avgA>p.avgR?'Andata':'Ritorno';
-        t+=`. <strong>Squilibrio ${pg}</strong>: ritardo concentrato sulla tratta di ${pg} (+${fmtΔ(d)} rispetto all'altra direzione)`;
+        t+=`. <strong>Squilibrio ${pg}</strong>: ritardo concentrato sulla tratta di ${pg} (${fmtΔ(d)} rispetto all'altra direzione)`;
       }
     }
     // collo di bottiglia
