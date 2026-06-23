@@ -686,10 +686,11 @@ function getAllCorse(applyFilters=false) {
             if (tr.ritorno === c.corsa) { direzione = 'R'; break; }
           }
         }
-        // Calcola periodo giornata (AM/PM) dal nome turno
+        // Calcola periodo giornata (AM/PM/SE) dal nome turno
         const tn = turno_cfg.toUpperCase();
         const periodo = tn.includes('AM')||tn.includes('MAT') ? 'AM'
-                      : tn.includes('PM')||tn.includes('POM') ? 'PM' : null;
+                      : tn.includes('PM')||tn.includes('POM') ? 'PM'
+                      : tn.includes('SE')||tn.includes('SER') ? 'SE' : null;
         rows.push({...c,
           partenza_prog_str: extractTimeStr(c.partenza_prog_str||''),
           arrivo_prog_str:   extractTimeStr(c.arrivo_prog_str||''),
