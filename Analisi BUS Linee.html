@@ -416,6 +416,7 @@ details[open] .det-chev { transform: rotate(90deg); }
           <label>Periodo:<select id="dConfigPeriodo" onchange="renderDettaglio()" style="min-width:140px"><option value="">Tutti</option></select></label>
           <label>Durata giornaliera:<select id="dDurata" onchange="renderDettaglio()"><option value="">Tutte</option><option value="1">Escludi picchi &gt; ±1 min</option><option value="2">Escludi picchi &gt; ±2 min</option><option value="3">Escludi picchi &gt; ±3 min</option><option value="4">Escludi picchi &gt; ±4 min</option></select></label>
           <label>Durata corsa:<select id="dDurataCorsa" onchange="renderDettaglio()"><option value="">Tutte</option><option value="1">Escludi |Δ Dur.| &gt; ±1 min</option><option value="2">Escludi |Δ Dur.| &gt; ±2 min</option><option value="3">Escludi |Δ Dur.| &gt; ±3 min</option><option value="4">Escludi |Δ Dur.| &gt; ±4 min</option></select></label>
+          <label>Scala grafico (min):<input type="number" id="dScalaGrafico" value="10" min="2" max="60" step="1" style="width:64px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" onchange="renderDettaglio()"></label>
         </div>
       </div>
       <div class="card-body" id="bodyDettaglio">
@@ -1191,9 +1192,11 @@ function _buildCorsaChart(canvasId, chartRows){
   const chartDR=datesSorted.map(d=>avg(chartRows.filter(r=>r.data===d).map(r=>r.durata_real)));
   const avgDR=avg(chartRows.map(r=>r.durata_real));
   const avgDP=avg(chartRows.map(r=>r.durata_prog));
-  const plottedVals=[...chartDP,...chartDR,avgDP,avgDR].filter(v=>v!=null);
-  const yScaleMin=plottedVals.length?Math.min(...plottedVals)-1:null;
-  const yScaleMax=plottedVals.length?Math.max(...plottedVals)+1:null;
+  // Scala manuale: centrata su avgDR, ampiezza = valore input dScalaGrafico (default 10 min)
+  const scalaInput=parseFloat(document.getElementById('dScalaGrafico')?.value||'10')||10;
+  const centro=avgDR??avgDP;
+  const yScaleMin=centro!=null?centro-scalaInput/2:null;
+  const yScaleMax=centro!=null?centro+scalaInput/2:null;
   const el=document.getElementById(canvasId);
   if(!el)return;
   const datasets=[
@@ -1533,7 +1536,8 @@ function renderDettaglio(){
 
   if(!rows.length){body.innerHTML='<div class="empty"><p>Nessun dato</p></div>';return;}
 
-  // Totali pre-filtro durata (solo per sub-label Corse)
+  // Snapshot prima dei filtri durata (per contare le corse escluse)
+  const rowsPreFiltriDurata = rows.slice();
   const nCorseAll=new Set(rows.map(r=>r.corsa)).size;
   const nGiorniAll=new Set(rows.map(r=>r.data)).size;
 
@@ -1559,15 +1563,17 @@ function renderDettaglio(){
   const thExtra=(showTurno?'<th>Turno</th>':'')+(showCorsa?'<th>Corsa</th>':'');
   const tdExtra=r=>(showTurno?`<td>${escH(r.turno_cfg)}</td>`:'')+(showCorsa?`<td><strong>${escH(r.corsa)}</strong></td>`:'');
 
-  // Helper: mini KPI per fascia
-  const fasciaKpi=(fRows)=>{
+  // Helper: mini KPI per fascia (fRowsPre = righe pre-filtri durata per quella fascia)
+  const fasciaKpi=(fRows, fRowsPre=null)=>{
+    const nEscluse=fRowsPre!=null?fRowsPre.length-fRows.length:0;
     const fCorse=new Set(fRows.map(r=>r.corsa)).size;
     const fGiorni=new Set(fRows.map(r=>r.data)).size;
     const fDurP=avg(fRows.map(r=>r.durata_prog)),fDurR=avg(fRows.map(r=>r.durata_real));
     const fDD=avg(fRows.map(r=>r.delta_durata));
     const fSP=avg(fRows.map(r=>r.scost_partenza)),fSA=avg(fRows.map(r=>r.scost_arrivo));
+    const esclTag=nEscluse>0?` <span style="font-size:13px;color:var(--muted);font-weight:500">(−${nEscluse} escl.)</span>`:'';
     return`<div class="kpi-grid" style="margin-bottom:12px">
-      <div class="kpi blue"><div class="kpi-lbl">Corse</div><div class="kpi-val">${fRows.length}</div><div class="kpi-sub">${fGiorni} giorni · ${fCorse} distinte</div></div>
+      <div class="kpi blue"><div class="kpi-lbl">Corse</div><div class="kpi-val">${fRows.length}${esclTag}</div><div class="kpi-sub">${fGiorni} giorni · ${fCorse} distinte</div></div>
       <div class="kpi ${fSP>5?'red':fSP>1?'orange':'green'}"><div class="kpi-lbl">Sc.Part.Medio</div><div class="kpi-val">${fmtΔ(fSP)}</div></div>
       <div class="kpi ${fSA>5?'red':fSA>1?'orange':'green'}"><div class="kpi-lbl">Sc.Arr.Medio</div><div class="kpi-val">${fmtΔ(fSA)}</div></div>
       <div class="kpi"><div class="kpi-lbl">Dur.Media Prog.</div><div class="kpi-val">${fmtDur(fDurP)}</div></div>
@@ -1622,16 +1628,16 @@ function renderDettaglio(){
     `).join('')}
   ` : '';
   const chartsSpec = fasce.length
-    ? fasce.map((f,i)=>({
-        id:`dCorsa_${i}`,
-        label:`${f.nome?f.nome+' — ':''}${f.tipo} ${f.dalle}–${f.alle}`,
-        rows: rows.filter(r=>{
-          if(r.pp==null)return false;
-          const dalle=parseTime(f.dalle),alle=parseTime(f.alle);
-          return dalle!=null&&alle!=null&&r.pp>=dalle&&r.pp<=alle;
-        })
-      }))
-    : [{id:'corsaC', label:null, rows}];
+    ? fasce.map((f,i)=>{
+        const fasciaPred=r=>{if(r.pp==null)return false;const da=parseTime(f.dalle),al=parseTime(f.alle);return da!=null&&al!=null&&r.pp>=da&&r.pp<=al;};
+        return{
+          id:`dCorsa_${i}`,
+          label:`${f.nome?f.nome+' — ':''}${f.tipo} ${f.dalle}–${f.alle}`,
+          rows: rows.filter(fasciaPred),
+          rowsPre: rowsPreFiltriDurata.filter(fasciaPred)
+        };
+      })
+    : [{id:'corsaC', label:null, rows, rowsPre:rowsPreFiltriDurata}];
 
   const tblRows = cR => cR.slice().sort((a,b)=>((a.dateObj||0)-(b.dateObj||0))||(a.turno_cfg||'').localeCompare(b.turno_cfg||'')||(a.corsa||'').localeCompare(b.corsa||''));
   const tblHtml = (cR, label) => `<details style="margin-top:10px">
@@ -1701,14 +1707,18 @@ function renderDettaglio(){
     </div>`;
   };
 
-  const chartsHtml = chartsSpec.map(({id,label,rows:cR})=>`
-    ${label?`<div style="font-weight:600;font-size:13px;margin:20px 0 8px;color:var(--accent)">📊 ${escH(label)}</div>${fasciaKpi(cR)}`:''}
+  const chartsHtml = chartsSpec.map(({id,label,rows:cR,rowsPre:cRPre})=>`
+    ${label?`<div style="font-weight:600;font-size:13px;margin:20px 0 8px;color:var(--accent)">📊 ${escH(label)}</div>${fasciaKpi(cR,cRPre)}`:''}
     <div style="height:240px;margin-bottom:12px"><canvas id="${id}"></canvas></div>
     ${tblHtml(cR, label)}
     ${buildDeltaTHtml(cR, label)}
     ${label?'<hr style="border:none;border-top:1px solid var(--border);margin:24px 0">':''}
   `).join('');
 
+  const nEscluseTot = rowsPreFiltriDurata.length - rows.length;
+  const esclTotTag = nEscluseTot>0
+    ? ` <span style="font-size:14px;color:var(--muted);font-weight:500">(−${nEscluseTot} escl.)</span>`
+    : '';
   const corseSubLbl=(durataV>0||durataCorsaV>0)
     ?`${nGiorni} giorni · ${nCorse} distinte<br><small style="color:var(--muted)">(tot. ${nGiorniAll} gg · ${nCorseAll} distinte)</small>`
     :`${nGiorni} giorni · ${nCorse} distinte`;
@@ -1718,7 +1728,7 @@ function renderDettaglio(){
 
   body.innerHTML=`
     <div class="kpi-grid" style="margin-bottom:14px">
-      <div class="kpi blue"><div class="kpi-lbl">Corse</div><div class="kpi-val">${rows.length}</div><div class="kpi-sub">${corseSubLbl}</div></div>
+      <div class="kpi blue"><div class="kpi-lbl">Corse</div><div class="kpi-val">${rows.length}${esclTotTag}</div><div class="kpi-sub">${corseSubLbl}</div></div>
       <div class="kpi ${aSP>5?'red':aSP>1?'orange':'green'}"><div class="kpi-lbl">Sc.Part.Medio</div><div class="kpi-val">${fmtΔ(aSP)}</div></div>
       <div class="kpi ${aSA>5?'red':aSA>1?'orange':'green'}"><div class="kpi-lbl">Sc.Arr.Medio</div><div class="kpi-val">${fmtΔ(aSA)}</div></div>
       <div class="kpi"><div class="kpi-lbl">Dur.Media Prog.</div><div class="kpi-val">${fmtDur(aDurP)}</div></div>
@@ -2322,6 +2332,11 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
   const direzioneLbl=direzione===''?null:direzione==='A'?'Andata':direzione==='R'?'Ritorno':null;
   const cfgPeriodoLbl=cfgP?.nome||null;
   const periodoLabel=[anno,mese!==''?mesiNomi[parseInt(mese)]:null,stato||null,periodoLbl,direzioneLbl,cfgPeriodoLbl].filter(Boolean).join(' – ')||'Tutti i periodi';
+  // Filtri durata attivi da includere nell'intestazione PDF
+  const _fDurParts=[];
+  if(durataV>0) _fDurParts.push(`Dur. giornaliera ±${durataV} min`);
+  if(durataCorsaV>0) _fDurParts.push(`Dur. corsa ±${durataCorsaV} min`);
+  const filtriDurataLabel=_fDurParts.length?' | Filtri: '+_fDurParts.join(', '):'';
 
   // ── Helper: genera immagine grafico da canvas offscreen ──
   async function makeChart(dates,dp,dr){
@@ -2471,7 +2486,7 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
   doc.setFontSize(16);doc.setTextColor(30,64,175);
   doc.text(`Analisi Statistica Linea ${linea.lineNumber} – ATM Trapani SpA`,14,15);
   doc.setFontSize(8.5);doc.setTextColor(100,116,139);
-  doc.text(`${periodoLabel}  |  Esportato ${new Date().toLocaleDateString('it-IT')}  |  ${nGiorni} giorni  |  ${rows.length} corse`,14,22);
+  doc.text(`${periodoLabel}${filtriDurataLabel}  |  Esportato ${new Date().toLocaleDateString('it-IT')}  |  ${nGiorni} giorni  |  ${rows.length} corse`,14,22);
   doc.setFontSize(11);doc.setTextColor(30,41,59);doc.text('Statistiche Complessive Linea',14,30);
   const kpiY=writeKPI(doc,33,avg(rows.map(r=>r.scost_partenza)),avg(rows.map(r=>r.scost_arrivo)),
     avg(rows.map(r=>r.durata_prog)),avg(rows.map(r=>r.durata_real)),avg(rows.map(r=>r.delta_durata)));
@@ -2495,7 +2510,7 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
         doc.setFontSize(14);doc.setTextColor(30,64,175);
         doc.text(`Fascia: ${fasciaLbl}  –  Linea ${linea.lineNumber}`,14,15);
         doc.setFontSize(8.5);doc.setTextColor(100,116,139);
-        doc.text(`${periodoLabel}  |  ${new Set(fRows.map(r=>r.data)).size} giorni  |  ${fRows.length} corse`,14,22);
+        doc.text(`${periodoLabel}${filtriDurataLabel}  |  ${new Set(fRows.map(r=>r.data)).size} giorni  |  ${fRows.length} corse`,14,22);
         doc.setFontSize(11);doc.setTextColor(30,41,59);doc.text(`Statistiche Fascia ${fasciaLbl}`,14,30);
         const fKpiY=writeKPI(doc,33,avg(fRows.map(r=>r.scost_partenza)),avg(fRows.map(r=>r.scost_arrivo)),
           avg(fRows.map(r=>r.durata_prog)),avg(fRows.map(r=>r.durata_real)),avg(fRows.map(r=>r.delta_durata)));
@@ -2515,7 +2530,7 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
       doc.setFontSize(14);doc.setTextColor(30,64,175);
       doc.text(`Turno: ${t.name}  –  Linea ${linea.lineNumber}`,14,15);
       doc.setFontSize(8.5);doc.setTextColor(100,116,139);
-      doc.text(`${periodoLabel}  |  ${new Set(tr.map(r=>r.data)).size} giorni  |  ${tr.length} corse`,14,22);
+      doc.text(`${periodoLabel}${filtriDurataLabel}  |  ${new Set(tr.map(r=>r.data)).size} giorni  |  ${tr.length} corse`,14,22);
       doc.setFontSize(11);doc.setTextColor(30,41,59);doc.text(`Statistiche Turno ${t.name}`,14,30);
       const tKpiY=writeKPI(doc,33,avg(tr.map(r=>r.scost_partenza)),avg(tr.map(r=>r.scost_arrivo)),
         avg(tr.map(r=>r.durata_prog)),avg(tr.map(r=>r.durata_real)),avg(tr.map(r=>r.delta_durata)));
@@ -2560,7 +2575,7 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
         doc.setFontSize(14);doc.setTextColor(30,64,175);
         doc.text(`Confronto per Fascia Oraria – ${tit}  –  Linea ${linea.lineNumber}`,14,15);
         doc.setFontSize(8.5);doc.setTextColor(100,116,139);
-        doc.text(`${periodoLabel}  |  Δ Durata medio per fascia oraria (AM/PM/SE)`,14,22);
+        doc.text(`${periodoLabel}${filtriDurataLabel}  |  Δ Durata medio per fascia oraria (AM/PM/SE)`,14,22);
         doc.addImage(fImg,'PNG',14,30,chartW,chartH+35);
       }
     }
