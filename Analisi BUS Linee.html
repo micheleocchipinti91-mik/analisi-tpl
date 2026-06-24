@@ -416,7 +416,7 @@ details[open] .det-chev { transform: rotate(90deg); }
           <label>Periodo:<select id="dConfigPeriodo" onchange="renderDettaglio()" style="min-width:140px"><option value="">Tutti</option></select></label>
           <label>Durata giornaliera:<select id="dDurata" onchange="renderDettaglio()"><option value="">Tutte</option><option value="1">Escludi picchi &gt; ±1 min</option><option value="2">Escludi picchi &gt; ±2 min</option><option value="3">Escludi picchi &gt; ±3 min</option><option value="4">Escludi picchi &gt; ±4 min</option></select></label>
           <label>Durata corsa:<select id="dDurataCorsa" onchange="renderDettaglio()"><option value="">Tutte</option><option value="1">Escludi |Δ Dur.| &gt; ±1 min</option><option value="2">Escludi |Δ Dur.| &gt; ±2 min</option><option value="3">Escludi |Δ Dur.| &gt; ±3 min</option><option value="4">Escludi |Δ Dur.| &gt; ±4 min</option></select></label>
-          <label>Scala grafico (min):<input type="number" id="dScalaGrafico" value="10" min="2" max="60" step="1" style="width:64px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" onchange="renderDettaglio()"></label>
+          <label>Scala grafico ± min:<input type="number" id="dScalaGrafico" value="" min="1" max="60" step="1" placeholder="auto" style="width:72px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px" onchange="renderDettaglio()"></label>
         </div>
       </div>
       <div class="card-body" id="bodyDettaglio">
@@ -1192,11 +1192,18 @@ function _buildCorsaChart(canvasId, chartRows){
   const chartDR=datesSorted.map(d=>avg(chartRows.filter(r=>r.data===d).map(r=>r.durata_real)));
   const avgDR=avg(chartRows.map(r=>r.durata_real));
   const avgDP=avg(chartRows.map(r=>r.durata_prog));
-  // Scala manuale: centrata su avgDR, ampiezza = valore input dScalaGrafico (default 10 min)
-  const scalaInput=parseFloat(document.getElementById('dScalaGrafico')?.value||'10')||10;
+  // Scala manuale ±: se il campo è valorizzato, asse = centro ± valore; altrimenti auto.
+  const _scalaRaw=document.getElementById('dScalaGrafico')?.value?.trim();
+  const scalapm=_scalaRaw!==''&&_scalaRaw!=null?parseFloat(_scalaRaw):NaN;
   const centro=avgDR??avgDP;
-  const yScaleMin=centro!=null?centro-scalaInput/2:null;
-  const yScaleMax=centro!=null?centro+scalaInput/2:null;
+  let yScaleMin=null,yScaleMax=null;
+  if(!isNaN(scalapm)&&scalapm>0&&centro!=null){
+    yScaleMin=centro-scalapm; yScaleMax=centro+scalapm;
+  } else {
+    // comportamento automatico originale
+    const plottedVals=[...chartDP,...chartDR,avgDP,avgDR].filter(v=>v!=null);
+    if(plottedVals.length){yScaleMin=Math.min(...plottedVals)-1;yScaleMax=Math.max(...plottedVals)+1;}
+  }
   const el=document.getElementById(canvasId);
   if(!el)return;
   const datasets=[
@@ -2345,9 +2352,17 @@ async function exportPDFGraficoLinea(lineaId, anno, mese, stato, periodo='', dir
     document.body.appendChild(cvs);
     const avgDP=avg(dp.filter(v=>v!=null));
     const avgDR=avg(dr.filter(v=>v!=null));
-    const plottedVals=[...dp,...dr,avgDP,avgDR].filter(v=>v!=null);
-    const yMin=plottedVals.length?Math.min(...plottedVals)-1:undefined;
-    const yMax=plottedVals.length?Math.max(...plottedVals)+1:undefined;
+    // Stessa logica scala ± del grafico a schermo
+    const _spRaw=document.getElementById('dScalaGrafico')?.value?.trim();
+    const _spm=_spRaw!==''&&_spRaw!=null?parseFloat(_spRaw):NaN;
+    const _centro=avgDR??avgDP;
+    let yMin,yMax;
+    if(!isNaN(_spm)&&_spm>0&&_centro!=null){
+      yMin=_centro-_spm; yMax=_centro+_spm;
+    } else {
+      const plottedVals=[...dp,...dr,avgDP,avgDR].filter(v=>v!=null);
+      if(plottedVals.length){yMin=Math.min(...plottedVals)-1;yMax=Math.max(...plottedVals)+1;}
+    }
     const datasets=[
       {label:'Dur.Real',data:dr,borderColor:'#2563eb',backgroundColor:'rgba(37,99,235,.08)',tension:.3,fill:true,pointRadius:dates.length>60?0:3,borderWidth:2}
     ];
